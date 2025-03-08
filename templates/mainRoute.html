@@ -1,0 +1,12 @@
+{{ template "header" }}
+<p>hello , {{ .Username }}</p>
+{{ range .Chats  }}
+<a href="/chat/{{ .ChatID }}">
+<div >
+  
+  <p> {{ .ChatName }} </p>
+</div>
+</a> 
+{{ end }}
+
+{{ template "footer" }}

@@ -1,0 +1,16 @@
+
+{{ template "header" }}
+
+{{ range .Messages  }}
+  <p> author : {{ .AuthorUsername }} </p>
+  <p>{{ .Text }}</p>
+{{ end }}
+
+<form action="/sendMessage" method="POST" >
+  <input type="text" name="messageText" >
+  <input type="submit" name="" value="submit">
+</form>
+
+{{ template "footer" }}
+
+
