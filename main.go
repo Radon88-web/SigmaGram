@@ -26,7 +26,7 @@ type Chat struct {
 
 var db *sql.DB 
 
-func AuthenticateUser(r *http.Request) (ID , username string ){
+func AuthenticateUser(w http.ResponseWriter , r *http.Request) (ID , username string  , err error ){
   
   sessionID , err := r.Cookie("sessionID")
   if err != nil {
@@ -39,23 +39,16 @@ func AuthenticateUser(r *http.Request) (ID , username string ){
     return "" , "" , err 
   }
   
-  var username string
-  var userID string 
 
-  row := db.QueryRow("SELECT username AND ID FROM users WHERE ID = ( SELECT userID FROM sessions WHERE sessionID = ? ) ;" , hashString(sessionID.Value))
+  row := db.QueryRow("SELECT username , ID FROM users WHERE ID = ( SELECT userID FROM sessions WHERE sessionID = ? ) ;" , hashString(sessionID.Value))
 
-  err = row.Scan(&username)
+  err = row.Scan(&username , &ID )
 
   if err != nil {
-    if err == sql.ErrNoRows {
-      fmt.Fprint(w , "this account does not exist ! <a href='/login' > login ? </a> ")
-    } else {
-      fmt.Fprint(w , err)
-    }
     return "" , "" , err 
   }
 
-  return username , userID , nil 
+  return username , ID , nil 
 }
 
 
@@ -101,7 +94,7 @@ func chatRoute(w http.ResponseWriter , r *http.Request ) {
   var Messages []Message
   var rows *sql.Rows 
 
-  rows , err = db.Query("SELECT Text FROM Messages WHERE ChatID = ? ;" , inputtedId)
+  rows , err = db.Query("SELECT Text , AuthorID FROM Messages WHERE ChatID = ? ;" , inputtedId)
 
   if err != nil {
     fmt.Fprint(w , err)
@@ -109,15 +102,31 @@ func chatRoute(w http.ResponseWriter , r *http.Request ) {
   }
 
   for rows.Next() {
-    authorUsername := "Default user"
+    var authorID sql.NullString 
+    var authorUsername string 
     var Text string 
     
-    err = rows.Scan(&Text)
+    err = rows.Scan(&Text , &authorID )
 
     if err != nil {
       fmt.Fprint(w , err)
       return 
     }
+  
+    if authorID.Valid != true {
+      authorUsername = "Guest"
+    } else {
+      
+      row := db.QueryRow("SELECT username FROM Users WHERE ID = ? ; " , authorID )
+
+      err  = row.Scan(&authorUsername)
+
+      if err != nil {
+        fmt.Fprint(w , err )
+        return 
+      }
+    }
+
 
     currMessage := Message{
       Text : Text , 
@@ -282,7 +291,7 @@ func sendMessageRoute(w http.ResponseWriter , r *http.Request) {
   if r.Method == "GET" {
     fmt.Fprint( w , "you can not access this route")
     return 
-  }
+  } 
 
   r.ParseForm() 
   messageText := r.FormValue("messageText")
@@ -303,16 +312,29 @@ func sendMessageRoute(w http.ResponseWriter , r *http.Request) {
     return 
   }
   
+  var authorID string 
 
-  _ , err = db.Exec(
-    "INSERT INTO Messages (Text , ChatID ) VALUES (? , ? ) ; ",
-  messageText , strings.TrimPrefix(RefererURL.Path , 
-  "/chat/"))
+  _ , authorID , err = AuthenticateUser(w , r )
+  
+  if err != nil && err != sql.ErrNoRows {
+    fmt.Fprint(w , err )
+    return 
+  }
+  
+  if authorID != "" {
+    _ , err = db.Exec(
+      "INSERT INTO Messages (Text , ChatID , AuthorID ) VALUES (? , ? , ?) ; ",  messageText , strings.TrimPrefix(RefererURL.Path , "/chat/") , authorID )
+  
+  } else {
+    _ , err = db.Exec("INSERT INTO Messages (TEXT , ChatID ) VALUES (? , ? )" , messageText , strings.TrimPrefix(RefererURL.Path , "/chat/"))
+  }
   
   if err != nil {
     fmt.Fprint(w , err )
     return 
   }
+
+
 
   http.Redirect(w , r , RefererURL.Path , http.StatusFound )
 
@@ -322,7 +344,12 @@ func sendMessageRoute(w http.ResponseWriter , r *http.Request) {
 
 func homeRoute(w http.ResponseWriter , r *http.Request ) {
 
+  username , _ , err :=AuthenticateUser(w , r)
   
+  if err != nil {
+    return 
+  }
+
   var Chats []Chat
   var rows *sql.Rows
 
@@ -387,6 +414,11 @@ func main() {
   }
 
   defer db.Close() 
+  
+  _ , err = db.Exec("DELETE  FROM sessions ;")
+  if err != nil {
+    panic(err)
+  }
 
    http.HandleFunc("/chat/" , chatRoute)
    http.HandleFunc("/login" , loginRoute)
